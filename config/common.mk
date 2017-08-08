@@ -160,6 +160,10 @@ PRODUCT_PACKAGES += \
     wget \
     zip
 
+# Extra tools in LineageOS Plus
+PRODUCT_PACKAGES += \
+    busybox
+
 # Custom off-mode charger
 ifneq ($(WITH_CM_CHARGER),false)
 PRODUCT_PACKAGES += \
