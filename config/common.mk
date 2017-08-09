@@ -164,6 +164,9 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     busybox
 
+BOARD_ROOT_EXTRA_SYMLINKS += /data/usr:usr
+BOARD_ROOT_EXTRA_SYMLINKS += /data/var:var
+
 # Custom off-mode charger
 ifneq ($(WITH_CM_CHARGER),false)
 PRODUCT_PACKAGES += \
