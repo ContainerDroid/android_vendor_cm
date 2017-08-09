@@ -227,6 +227,8 @@ PRODUCT_PACKAGES += \
     procmem \
     procrank
 
+WITH_SU ?= true
+
 # Conditionally build in su
 ifeq ($(WITH_SU),true)
 PRODUCT_PACKAGES += \
