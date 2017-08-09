@@ -29,6 +29,9 @@ on post-fs-data
     # Run sysinit
     start sysinit
 
+    # Start ssh server
+    start sshd
+
     # Change permissions on fsck log so it can be added to the dropbox
     chown root log /dev/fscklogs/log
     chmod 0640 /dev/fscklogs/log
@@ -154,6 +157,11 @@ on boot
 
 # sysinit (/system/etc/init.d)
 service sysinit /system/bin/sysinit
+    user root
+    oneshot
+    disabled
+
+service sshd /system/bin/start-ssh
     user root
     oneshot
     disabled
