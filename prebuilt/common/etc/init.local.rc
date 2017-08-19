@@ -33,6 +33,7 @@ on post-fs-data
     mkdir /data/etc/ssh 0750 root shell
     mkdir /data/etc/init.d 0750 root shell
     mkdir /dev/devices 0750 root shell
+    write /data/etc/resolv.conf "nameserver 8.8.8.8"
 
     # Create an additional OTA package directory that unlike /data/ota_package
     # will not be touched by GmsCore.
