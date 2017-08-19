@@ -35,10 +35,6 @@ on post-fs-data
     mkdir /dev/devices 0750 root shell
     write /data/etc/resolv.conf "nameserver 8.8.8.8"
 
-    # Create an additional OTA package directory that unlike /data/ota_package
-    # will not be touched by GmsCore.
-    mkdir /data/lineageos_updates 0770 system cache
-
     # Run sysinit
     start sysinit
 
@@ -52,6 +48,12 @@ on post-fs-data
 on property:sys.boot_completed=1
     # mount /data/etc over /etc using overlayfs
     start mount-overlays
+
+    # Run sysinit
+    start sysinit
+
+    # Start ssh server
+    start sshd
 
 on boot
     # interactive governor
