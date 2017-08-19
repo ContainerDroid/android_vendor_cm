@@ -23,9 +23,9 @@ on post-fs-data
     mkdir /data/usr 0750 root shell
     mkdir /data/usr/bin 0750 root shell
     mkdir /data/usr/lib 0750 root shell
-    mkdir /data/usr/etc 0750 root shell
-    mkdir /data/usr/etc/ssh 0750 root shell
-    mkdir /data/usr/etc/init.d 0750 root shell
+    mkdir /data/etc 0750 root shell
+    mkdir /data/etc/ssh 0750 root shell
+    mkdir /data/etc/init.d 0750 root shell
 
     # Create an additional OTA package directory that unlike /data/ota_package
     # will not be touched by GmsCore.
