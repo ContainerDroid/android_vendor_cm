@@ -1,6 +1,6 @@
 #!/system/bin/sh
 
-if ! [ -d /var/lib/dpkg/status ]; then
+if ! [ -f /var/lib/dpkg/status ]; then
 	mkdir -p /var/lib/dpkg
 	touch /var/lib/dpkg/status
 fi
