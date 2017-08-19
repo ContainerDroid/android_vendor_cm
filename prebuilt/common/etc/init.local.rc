@@ -17,6 +17,12 @@ on init
     chmod 0664 /dev/bfqio/rt-display/tasks
     chmod 0220 /dev/bfqio/rt-display/cgroup.event_control
 
+service mount-overlays /system/bin/sh /init.overlays.sh
+    class main
+    user root
+    oneshot
+    disabled
+
 on post-fs-data
     mkdir /cache/recovery 0770 system cache
     mkdir /data/var 0750 root shell
@@ -26,6 +32,7 @@ on post-fs-data
     mkdir /data/etc 0750 root shell
     mkdir /data/etc/ssh 0750 root shell
     mkdir /data/etc/init.d 0750 root shell
+    mkdir /dev/devices 0750 root shell
 
     # Create an additional OTA package directory that unlike /data/ota_package
     # will not be touched by GmsCore.
@@ -40,6 +47,10 @@ on post-fs-data
     # Change permissions on fsck log so it can be added to the dropbox
     chown root log /dev/fscklogs/log
     chmod 0640 /dev/fscklogs/log
+
+on property:sys.boot_completed=1
+    # mount /data/etc over /etc using overlayfs
+    start mount-overlays
 
 on boot
     # interactive governor

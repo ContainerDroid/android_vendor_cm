@@ -59,7 +59,8 @@ endif
 
 # CM-specific init file
 PRODUCT_COPY_FILES += \
-    vendor/cm/prebuilt/common/etc/init.local.rc:root/init.cm.rc
+    vendor/cm/prebuilt/common/etc/init.local.rc:root/init.cm.rc \
+    vendor/cm/prebuilt/common/etc/init.overlays.sh:root/init.overlays.sh
 
 # Copy over added mimetype supported in libcore.net.MimeUtils
 PRODUCT_COPY_FILES += \
