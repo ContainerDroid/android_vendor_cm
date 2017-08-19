@@ -166,6 +166,7 @@ PRODUCT_PACKAGES += \
 
 BOARD_ROOT_EXTRA_SYMLINKS += /data/usr:usr
 BOARD_ROOT_EXTRA_SYMLINKS += /data/var:var
+BOARD_ROOT_EXTRA_SYMLINKS += /data/var/run:run
 
 # Custom off-mode charger
 ifneq ($(WITH_CM_CHARGER),false)
