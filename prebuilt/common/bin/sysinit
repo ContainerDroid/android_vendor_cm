@@ -1,6 +1,6 @@
 #!/system/bin/sh
 
-export PATH=/usr/sbin:/usr/bin:/system/xbin:/system/sbin:/system/bin:/sbin
+export PATH=/sbin:/system/sbin:/system/xbin:/system/bin
 for i in /system/etc/init.d/*; do
     if [ -x $i ]; then
         /system/bin/log -t sysinit Running $i
