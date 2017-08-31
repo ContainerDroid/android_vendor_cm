@@ -158,12 +158,9 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     busybox
 
-BOARD_ROOT_EXTRA_SYMLINKS += /data/termux/usr:usr
-BOARD_ROOT_EXTRA_SYMLINKS += /data/termux/usr/bin:/bin
-BOARD_ROOT_EXTRA_SYMLINKS += /data/termux/home:home
-BOARD_ROOT_EXTRA_SYMLINKS += /data/termux/srv:srv
-BOARD_ROOT_EXTRA_SYMLINKS += /data/termux/var:var
-BOARD_ROOT_EXTRA_SYMLINKS += /data/termux/var/run:run
+BOARD_ROOT_EXTRA_SYMLINKS += /data/usr:usr
+BOARD_ROOT_EXTRA_SYMLINKS += /data/var:var
+BOARD_ROOT_EXTRA_SYMLINKS += /data/var/run:run
 
 # Custom off-mode charger
 ifneq ($(WITH_CM_CHARGER),false)
