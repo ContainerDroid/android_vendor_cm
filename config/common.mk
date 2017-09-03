@@ -31,6 +31,10 @@ ifneq ($(TARGET_BUILD_VARIANT),eng)
 ADDITIONAL_DEFAULT_PROPERTIES += ro.adb.secure=1
 endif
 
+# Termux
+PRODUCT_COPY_FILES += \
+    vendor/cm/prebuilt/common/bin/termux:system/bin/termux
+
 # Backup Tool
 PRODUCT_COPY_FILES += \
     vendor/cm/prebuilt/common/bin/backuptool.sh:install/bin/backuptool.sh \
@@ -153,14 +157,6 @@ PRODUCT_PACKAGES += \
     unzip \
     vim \
     zip
-
-# Extra tools in LineageOS Plus
-PRODUCT_PACKAGES += \
-    busybox
-
-BOARD_ROOT_EXTRA_SYMLINKS += /data/usr:usr
-BOARD_ROOT_EXTRA_SYMLINKS += /data/var:var
-BOARD_ROOT_EXTRA_SYMLINKS += /data/var/run:run
 
 # Custom off-mode charger
 ifneq ($(WITH_CM_CHARGER),false)

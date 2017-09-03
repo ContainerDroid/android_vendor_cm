@@ -25,15 +25,7 @@ service mount-overlays /system/bin/sh /init.overlays.sh
 
 on post-fs-data
     mkdir /cache/recovery 0770 system cache
-    mkdir /data/var 0750 root shell
-    mkdir /data/usr 0750 root shell
-    mkdir /data/usr/bin 0750 root shell
-    mkdir /data/usr/lib 0750 root shell
-    mkdir /data/etc 0750 root shell
-    mkdir /data/etc/ssh 0750 root shell
-    mkdir /data/etc/init.d 0750 root shell
     mkdir /dev/devices 0750 root shell
-    write /data/etc/resolv.conf "nameserver 8.8.8.8"
 
     # Run sysinit
     start sysinit
@@ -47,7 +39,7 @@ on post-fs-data
 
 on property:sys.boot_completed=1
     # mount /data/etc over /etc using overlayfs
-    start mount-overlays
+    #start mount-overlays
 
     # Run sysinit
     start sysinit
