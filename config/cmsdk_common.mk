@@ -1,6 +1,7 @@
 # Permissions for cmsdk services
 PRODUCT_COPY_FILES += \
     vendor/cm/config/permissions/org.cyanogenmod.audio.xml:system/etc/permissions/org.cyanogenmod.audio.xml \
+    vendor/cm/config/permissions/org.cyanogenmod.containers.xml:system/etc/permissions/org.cyanogenmod.containers.xml \
     vendor/cm/config/permissions/org.cyanogenmod.livedisplay.xml:system/etc/permissions/org.cyanogenmod.livedisplay.xml \
     vendor/cm/config/permissions/org.cyanogenmod.performance.xml:system/etc/permissions/org.cyanogenmod.performance.xml \
     vendor/cm/config/permissions/org.cyanogenmod.profiles.xml:system/etc/permissions/org.cyanogenmod.profiles.xml \
