@@ -1,0 +1,639 @@
+#!/system/bin/sh
+
+set -e -u -o pipefail
+
+export PATH=/system/bin
+busybox="/system/xbin/busybox"
+deb_dir="var/cache/apt/archives"
+logcat=false
+
+log() {
+	LOGTAG="eden"
+	LEVEL="$1"; shift
+	MSG="$0: $@"
+	if [ "$logcat" = true ]; then
+		/system/bin/log -t ${LOGTAG} -p ${LEVEL} ${MSG}
+	else
+		echo ${MSG}
+	fi
+}
+
+usage() {
+	cat <<-'EOF'
+	Usage:
+	* ./eden bootstrap
+	 --- Set up and mount a base Eden rootfs with the apt package manager
+	 --- at persist.eden.rootdir. If persist.eden.diskimage and
+	 --- persist.eden.diskimage.size are set, will instead mount the
+	 --- Eden rootfs inside a loopback device. Useful if bootstrapping
+	 --- onto an SD card (no exec permissions). If successful, will set
+	 --- persist.eden.enabled is "true"
+	
+	* ./eden delete
+	 --- Deletes the Eden rootdir or disk image, depending on which
+	 --- format is used. If successful, sets persist.eden.enabled to
+	 --- "false"
+	
+	* ./eden diskimage-mount
+	 --- Only needs to be called if persist.eden.diskimage is set.
+	 Mount point is at persist.eden.rootdir.
+	
+	* ./eden diskimage-unmount
+	 --- Only needs to be called if persist.eden.diskimage is set.
+	
+	* ./eden mount
+	 --- Mounts an existing Eden rootdir/disk image to the top-level
+	 --- ramdisk. Creates symlinks to /bin, /home, /var, /run, /srv,
+	 --- which do not exist in the Android filesystem hierarchy.
+	 --- The /etc is treated differently, because there already exists
+	 --- a symlink to the read-only /system/etc location.
+	 --- Both the Android and the Eden /etc folders are kept and merged
+	 --- using overlayfs. Any file in the Eden /etc will override in
+	 --- terms of visibility (but not replace) the /system/etc file of the
+	 --- same name. As for /usr, although that location does not exist in
+	 --- Android, there is a /system/usr which contains mostly tzdata.
+	 --- Normally, Android applications get access to tzdata by using
+	 --- $ANDROID_ROOT=/system. By using the same overlayfs technique for
+	 --- /usr and /system/usr, we can change $ANDROID_ROOT to /.
+	
+	* ./eden unmount
+	 --- Unmounts an existing Eden rootdir/disk image from the top-level
+	 --- ramdisk.
+	
+	* ./eden resize
+	 --- Resizes an existing Eden disk image to
+	 --- persist.eden.diskimage.size. The size can be specified in
+	 --- whatever format is accepted by the "truncate" program.
+	 --- WARNING: Not guaranteed to keep your data integrity
+	 --- if you want to shrink the disk image!.
+	 --- Not applicable if disk image format is not used.
+	
+	* ./eden status
+	 --- Dumps the properties related to this program.
+	
+	Persistent properties that are taken as input by this script:
+	* persist.eden.rootdir
+	* persist.eden.diskimage
+	* persist.eden.diskimage.size
+	
+	Properties that are set and used internally by the script, and that are
+	persistent across reboots:
+	* persist.eden.enabled
+	
+	Properties that are set and used internally by the script, and that are
+	not persistent:
+	* sys.eden.diskimage.mounted
+	* sys.eden.ramdisk.mounted
+
+	All commands accept an optional [-l|--logcat] argument for their
+	output to be sent to the system logcat buffer. Otherwise it will
+	be printed to stdout.
+	EOF
+}
+
+die() {
+	rc="$1"
+	[ "$rc" -ne 0 ] && {
+		log e "Failed, exiting.";
+		exit "$rc";
+	} || {
+		:
+	}
+}
+
+cleanup() {
+	if [ "$(getprop sys.eden.ramdisk.mounted)" = "true" ]; then
+		ramdisk_unmount
+	fi
+	if [ "$(getprop sys.eden.ramdisk.mounted)" = "true" ]; then
+		diskimage_unmount
+	fi
+}
+
+#trap cleanup 0
+
+create_dir_if_not_exists() {
+	dir="$1"
+	if ! [ -d "$dir" ]; then
+		log i "Creating new directory $dir..."
+		mkdir -p "$dir"
+	fi
+}
+
+set_permissions() {
+	dir="$1"
+	uid="$2"
+	gid="$3"
+	log i "Setting owner $uid for dir $dir..."
+	chown -R "$uid" "$dir"; die "$?"
+	log i "Setting group $gid for dir $dir..."
+	chgrp -R "$gid" "$dir"; die "$?"
+	log i "Setting permissions for dir $dir..."
+	find "$dir" -type d | "$busybox" xargs -r chmod 0755
+	find "$dir" -type f | "$busybox" xargs -r chmod 0644
+	find "$dir" -type f | "$busybox" xargs -r file | grep -E "ELF|script" | \
+		cut -f 1 -d : | "$busybox" xargs -r chmod 0755
+	restorecon -R ${dir}
+}
+
+# Utility function to download a resource, optionally checking against a checksum.
+# Shamelessly kanged from termux-packages
+eden_download() {
+	local URL="$1"
+	local DESTINATION="$2"
+
+	if [ -f "$DESTINATION" ] && [ $# = 3 ] && [ -n "$3" ]; then
+		# Keep existing file if checksum matches.
+		local EXISTING_CHECKSUM
+		EXISTING_CHECKSUM=$(sha256sum "$DESTINATION" | cut -f 1 -d ' ')
+		if [ "$EXISTING_CHECKSUM" = "$3" ]; then return; fi
+	fi
+
+	local TMPFILE
+	TMPFILE=$(mktemp "XXXXXXXXX")
+	log i "Downloading ${URL}"
+	local TRYMAX=6
+	for try in $(seq 1 $TRYMAX); do
+		if curl -L --fail --retry 2 -o "$TMPFILE" "$URL"; then
+			local ACTUAL_CHECKSUM
+			ACTUAL_CHECKSUM=$(sha256sum "$TMPFILE" | cut -f 1 -d ' ')
+			if [ $# = 3 ] && [ -n "$3" ]; then
+				# Optional checksum argument:
+				local EXPECTED=$3
+				if [ "$EXPECTED" != "$ACTUAL_CHECKSUM" ]; then
+					>&2 printf "Wrong checksum for %s:\nExpected: %s\nActual:   %s\n" \
+					           "$URL" "$EXPECTED" "$ACTUAL_CHECKSUM"
+					exit 1
+				fi
+			else
+				printf "No validation of checksum for %s:\nActual: %s\n" \
+				       "$URL" "$ACTUAL_CHECKSUM"
+			fi
+			mv "$TMPFILE" "$DESTINATION"
+			return
+		else
+			log i "Download of $URL failed (attempt $try/$TRYMAX)" 1>&2
+			sleep 15
+		fi
+	done
+
+	eden_error_exit "Failed to download $URL"
+}
+
+diskimage_bootstrap() {
+	if [ -f "$diskimage" ]; then
+		log i "Using disk image $diskimage..."
+		return
+	fi
+	size=$(getprop persist.eden.diskimage.size)
+	if [ -z "$size" ]; then
+		log e "persist.eden.diskimage.size not set. Exiting."
+		exit 1
+	fi
+	log w "Disk image does not exist. Creating new empty one..."
+	truncate -s "$size" "$diskimage"; die "$?"
+	log i "Formatting disk image"
+	mke2fs -F "$diskimage"; die "$?"
+}
+
+main_bootstrap() {
+	# Rootdir will always be needed, regardless of whether this is diskimage or not.
+	# If it is, create the other dirs only once it is mounted.
+	create_dir_if_not_exists "$rootdir"
+	if [ -n "$diskimage" ]; then
+		log i "Bootstrapping to disk image $diskimage..."
+		diskimage_bootstrap
+		diskimage_mount
+	fi
+	log i "Creating rootdir skeleton..."
+	create_dir_if_not_exists "$rootdir/etc"
+	create_dir_if_not_exists "$rootdir/home"
+	create_dir_if_not_exists "$rootdir/usr/bin"
+	create_dir_if_not_exists "$rootdir/usr/lib"
+	create_dir_if_not_exists "$rootdir/srv"
+	create_dir_if_not_exists "$rootdir/var/run"
+	create_dir_if_not_exists "$rootdir/var/lib/dpkg/info"
+	create_dir_if_not_exists "$rootdir/var/lib/dpkg/updates"
+	create_dir_if_not_exists "$rootdir/var/log/apt/"
+	create_dir_if_not_exists "$rootdir/var/cache/apt/archives/partial"
+	create_dir_if_not_exists "$rootdir/etc/apt/preferences.d/"
+	create_dir_if_not_exists "$rootdir/etc/apt/apt.conf.d"
+
+	touch "$rootdir/var/lib/dpkg/status"
+	touch "$rootdir/var/lib/dpkg/available"
+
+	if ! [ -f "$rootdir/etc/resolv.conf" ]; then
+		echo "nameserver 8.8.8.8" > "$rootdir/etc/resolv.conf"
+	fi
+	echo "$HOSTNAME" > "$rootdir/etc/hostname"
+
+	log i "Downloading packages for apt..."
+	create_dir_if_not_exists "$rootdir/$deb_dir"
+	deb_list=""
+	for pair in \
+		"libc++_15.2_aarch64.deb            38c38eae99ef8e78bc98dd088e7d412127f9178ca0ed3300b2a1838bda47846d" \
+		"libandroid-support_22_aarch64.deb  f1e2b940633ae676a15f71501208c7307c800ceefdf37ac12707a5692352b6f6" \
+		"busybox_1.27.1-2_aarch64.deb       12f39b0faa30bf81eea9444989bfc941f0682e7e8408543085b0f09d274a40d0" \
+		"liblzma_5.2.3_aarch64.deb          ea94813ecf044d952fbfde11768117466cf6cca22fa7a2a1adcef15be7c8083e" \
+		"ncurses_6.0.20170827_aarch64.deb   83933360d72d506aacb1f46a1f1eedf734a72866006609946301b37ef0d61770" \
+		"readline_7.0.3_aarch64.deb         13a4848b1d2e8cb896b6eef86ff1a05762b08df3ae7bce2f6ccada8d8b82490b" \
+		"command-not-found_1.25_aarch64.deb 692e009abcc1c2f7fadc59911e70292c6ce8ba9561b303ddd4822473da8eca74" \
+		"bash_4.4.12_aarch64.deb            fa0210ab6e86e4beeaf9b0e1ee56c8e17fe4d1d635b734eb36d52fc77cac4b2a" \
+		"gpgv_1.4.22_aarch64.deb            f0ebf39ec092bea3c0ee99bc1db084fdd788139b8f9d52d9d576af57f3de6e80" \
+		"gnupg_1.4.22_aarch64.deb           972f16672b80474c9ec3342576f1b7278abfd849bce653e5bc7e5892ca23bebb" \
+		"libutil_0.3_aarch64.deb            cf3b9a43b5f52f99e474d5cbc35faed1293277d01b8e6fc4383429c5a97af388" \
+		"dpkg_1.18.24_aarch64.deb           48e69f7b6d3fb828deeb2c86c2e54242922df53f241bc14cc0ff7e80fa56c340" \
+		"ca-certificates_20170607_all.deb   d784110d2a34970f088ecb65effc2316e3853d14e8ec26684b994d0a6447cf25" \
+		"openssl_1.0.2l-1_aarch64.deb       bd27717b4087be4918110423a734d156508546741edc4d52071857c9c3f59c46" \
+		"libnghttp2_1.25.0_aarch64.deb      8c3ff9eeead90b575af08b0c306263fe334ca9f1edc0b1b61746546f7a394326" \
+		"libcurl_7.55.1_aarch64.deb         df4af876f7deb0cf23d4f0266687fa39c879030661855d007072ff44fe3ed95c" \
+		"apt_1.4.7_aarch64.deb              eebc22da83f0bcc710a6ff67dd1b5afc5a670aef4d5e0df605f3b51de9931a10"
+	do
+		deb=$(echo "$pair" | "$busybox" awk '{ print $1; }')
+		checksum=$(echo "$pair" | "$busybox" awk '{ print $2; }')
+		echo "Downloading $deb, checksum $checksum..."
+		[ $deb = "ca-certificates_20170607_all.deb" ] && arch="all" || arch=$(uname -m)
+		eden_download \
+			"http://apt.lineageosplus.org/dists/bootstrap/main/binary-$arch/$deb" \
+			"$rootdir/$deb_dir/$deb" \
+			"$checksum"
+		deb_list+=" $rootdir/$deb_dir/$deb"
+	done
+
+	ln -sf "$rootdir/usr/bin/bash" "$rootdir/usr/bin/sh"
+
+	setprop persist.eden.enabled true
+
+	ramdisk_mount
+
+	#export LD_LIBRARY_PATH=/usr/lib
+	export ANDROID_ROOT=/
+
+	log i "Installing required deb packages for apt..."
+	for deb in $deb_list; do
+		log i "Installing $deb..."
+		"$busybox" dpkg -i "$deb"
+	done
+
+	cat > "$rootdir/usr/lib/os-release" <<-'EOF'
+		NAME=LineageOS Plus
+		VERSION=14.1
+		ID=lineageplus
+		VERSION_ID=14.1
+		PRETTY_NAME="LineageOS Plus 14.1"
+		HOME_URL="http://lineageosplus.org/"
+	EOF
+	ln -s ../usr/lib/os-release "$rootdir/etc/os-release"
+
+	cat > "$rootdir/etc/apt/sources.list" <<-EOF
+		# The main eden repository:
+		deb [arch=all,$(uname -m)] http://apt.lineageosplus.org stable main
+	EOF
+
+	cat > /var/cache/apt/apt-gpg.key <<-'EOF'
+	-----BEGIN PGP PUBLIC KEY BLOCK-----
+	Version: GnuPG v1
+
+	mQENBFmrBFgBCADSz/BgFp5/IvtvM/TItoJfKF/tVwQWbbcH1mtowwBRDsDMWc11
+	aqIGujNG04x5VVy9CI9uf8LidGkLnEkQp2X5Nok4G5IKMUIVrVQekDDOnsPEt3RK
+	2ejdQW0l4CzhrM+yyTvNDU7wBZeoke2F69IEsUnz8vGVbOHNU3pI01NG+eGYysBE
+	EQQuh1I40pUIy5OZZE8kguxzoxn/H/KRuI7XiOK/FQSjxZm6z9NvDPogkcBNrYBo
+	U5qfpep7T0IE38cYSFN1zyRfAHlnLMKt0pgiJfkCCS2oTM+TZipNPbh5um6+OQnl
+	0yNR+b7yUSeHeyKcgVWIAmyJ45lAAUx65J8zABEBAAG0JklvYW5hIENpb3JuZWkg
+	PGNpb3JuZWlpb2FuYUBnbWFpbC5jb20+iQE4BBMBAgAiBQJZqwRYAhsDBgsJCAcD
+	AgYVCAIJCgsEFgIDAQIeAQIXgAAKCRDWLj442126VlZ+B/0YCnXTV/Zxfutz6xnF
+	XlG2OZg5vUF7+gPyKo45YgA7aZ0fL9Z3wQqLDSaCnv0of6TlY0GHVWhqa/JEfyYO
+	QZWqLWoWsYXLr1/ClY1DeTmYTR+TutAJcXuKYSA2bgN13AdKGHyrWvxmEhpUDAC9
+	/rkxm+yc44S0Wgyw/d5sIsLtYWkr5PrWsDCSPHxjmxtpXLrloj1SrfR74l4s0paq
+	DpsXkU8usCzoy2+c2AhUARD4VRqgcylri93pvQz1Q/TbP/FzHQDvCcoV5nlFRhLT
+	BT2AIKQyZuUWx4WNbPrTxOug3zBpcOFWquLoWX3gPQXGWGqOfUGW48iFBt6WqoRs
+	eeP/uQENBFmrBFgBCADL9FvG/8BBjIM6/UBkVLZqlgVEU5oQvzTqLWwyOm5L8tZV
+	k4OGGozyBVImWECWG7uXCvxS1Er6EuZcrlHVX9nfnRTfDfx+27cz+b9EdnCFFILi
+	+geYGebmt6aLMsn/SzwGZnJcmjXXj3mqmeBsm86IuuJx0/9OshJVsRcWf3b376ce
+	TXzaLprMveiv2XkIKbA0C4DQ68te19WM70xYQFs/Sm9KpT5vG7rrtqncbBaU80Nu
+	sskmOy8SBSy/ta6PHmcQ5UkUey47URqRc8nacQzkoU36j5mimgcV8arz+wHCnfsJ
+	puhPpsrc0UZYZ8hEpykMutYvjLfyjc7mZh4NIX6hABEBAAGJAR8EGAECAAkFAlmr
+	BFgCGwwACgkQ1i4+ONtdulZc1wf8Dd0UMS6vTHJD0iKToj17RIwvc78ZWL8IQZJX
+	uxD2g8q2LWaQzjLaVmlcAqnYOCR6/6bStKvdIbFOZw0qa1VQAJJJrYlRduej56DI
+	r/tYMSFpUliEde+ujTDkKik72z/OebPqrx+s2Jc2hVI+ww/Kuf4I9CQH6/icduNk
+	B9w8F7G97CD1rB9HB/tc+H0wu+G1DeShxaDcSTkXqJPCYXP/+1JFMY8v38VJSNtm
+	3kYgel2ev7ZTOOtxX03KB9qBFrqRQY51bDSbukm/8bixIUEN+3gy6zSy8VgKXnTN
+	+AcgZKJ6wSN2Eem2FFKRUnkjVmC/nN6kieXGp+bL5vTcUjG8cQ==
+	=96Ql
+	-----END PGP PUBLIC KEY BLOCK-----
+	EOF
+
+	mkdir -p /data/eden/tmp/busybox
+	${busybox} --install -s /data/eden/tmp/busybox
+	PATH=/data/eden/tmp/busybox:/usr/bin:/system/bin HOME=/home apt-key add /var/cache/apt/apt-gpg.key
+	PATH=/data/eden/tmp/busybox:/usr/bin:/system/bin HOME=/home apt update
+
+	set_permissions "$rootdir" root root
+	rm -rf /data/eden/tmp
+
+	log i "Bootstrap successful."
+}
+
+check_overlapped_files() {
+	lower="$1"
+	upper="$2"
+	common=""
+	(cd "$lower"
+	for file in `find .`; do
+		[ -e "$upper/$file" ] && common+=" $file" || :
+	done
+	if [ -n "$common" ]; then
+		log w "WARNING: The following files exist in both $lower and $upper."
+		log w "The ones in $upper will hide the ones in $lower while overlayfs is mounted:"
+		log w "$common"
+	fi)
+}
+
+ramdisk_mount() {
+	if [ -n "$diskimage" ]; then
+		check_diskimage_mounted true || {
+			diskimage_mount; die "$?"
+		}
+	fi
+	check_ramdisk_mounted false || {
+		log e "Ramdisk already mounted."
+		return 1
+	}
+	log i "Mounting eden into the ramdisk..."
+
+	log i "Checking for kernel support of overlayfs..."
+	overlayfs=$(${busybox} grep -E "(overlay|overlayfs)" "/proc/filesystems")
+	if [ $? -ne 0 ]; then
+		log i "Overlayfs not supported, exiting."
+		exit 1
+	fi
+	overlayfs=$(echo $overlayfs | ${busybox} awk '{ print $2 }')
+
+	log i "Remounting ramdisk read/write..."
+	${busybox} mount -o remount,rw /
+	[ $? -ne 0 ] && { log e "Failed, exiting."; exit 1; }
+	check_overlapped_files "/system/usr" "$rootdir/usr"
+	check_overlapped_files "/system/etc" "$rootdir/etc"
+	rm -f "/etc"; [ $? -ne 0 ] && mount_fail_cleanly
+	create_dir_if_not_exists "/etc"
+	create_dir_if_not_exists "/usr"
+	create_dir_if_not_exists "/tmp"
+	${busybox} mount -t tmpfs none "/tmp"; [ $? -ne 0 ] && mount_fail_cleanly
+	${busybox} mount -t ${overlayfs} -o lowerdir="/system/usr",upperdir="$rootdir/usr" \
+		${overlayfs} "/usr"; [ $? -ne 0 ] && mount_fail_cleanly
+	${busybox} mount -t ${overlayfs} -o lowerdir="/system/etc",upperdir="$rootdir/etc" \
+		${overlayfs} "/etc"; [ $? -ne 0 ] && mount_fail_cleanly
+	ln -sf "$rootdir/home"    "/home"; [ $? -ne 0 ] && mount_fail_cleanly
+	ln -sf "$rootdir/srv"     "/srv";  [ $? -ne 0 ] && mount_fail_cleanly
+	ln -sf "$rootdir/var"     "/var";  [ $? -ne 0 ] && mount_fail_cleanly
+	ln -sf "$rootdir/var/run" "/run";  [ $? -ne 0 ] && mount_fail_cleanly
+	ln -sf "$rootdir/usr/bin" "/bin";  [ $? -ne 0 ] && mount_fail_cleanly
+	log i "Mounting ramdisk back read-only..."
+	"$busybox" mount -o remount,ro /
+	log i "Eden mounted successfully."
+	setprop sys.eden.ramdisk.mounted true
+}
+
+do_unmount() {
+	"$busybox" umount "/etc"
+	"$busybox" umount "/usr"
+	"$busybox" umount "/tmp"
+	rmdir "/etc"
+	rmdir "/usr"
+	rmdir "/tmp"
+	rm -f "/home"
+	rm -f "/srv"
+	rm -f "/var"
+	rm -f "/run"
+	rm -f "/bin"
+	ln -s "/system/etc" "/etc"
+}
+
+mount_fail_cleanly() {
+	do_unmount
+	"$busybox" mount -o remount,ro /
+	exit 1
+}
+
+ramdisk_unmount() {
+	check_ramdisk_mounted true || {
+		log e "Ramdisk not mounted."
+		return 1
+	}
+	log i "Unmounting eden..."
+	"$busybox" mount -o remount,rw /
+	do_unmount
+	"$busybox" mount -o remount,ro /
+	setprop sys.eden.ramdisk.mounted false
+	log i "Eden unmounted successfully..."
+}
+
+diskimage_mount() {
+	if [ -z "$diskimage" ]; then
+		log e "Disk image not specified. Assuming rootdir points at actual eden folder. Do nothing."
+		return 1
+	fi
+	check_ramdisk_mounted false || {
+		log e "Eden already mounted to ramdisk, doing nothing."
+		return 1
+	}
+	check_diskimage_mounted false || {
+		log e "Disk image already mounted, doing nothing."
+		return 1
+	}
+	log i "Checking filesystem integrity..."
+	e2fsck -y -f "$diskimage"
+	log i "Mounting $diskimage loop device at $rootdir..."
+	${busybox} losetup /dev/block/loop0 ${diskimage}
+	${busybox} mount -o loop /dev/block/loop0 ${rootdir}
+
+	setprop sys.eden.diskimage.mounted true
+}
+
+diskimage_unmount() {
+	if [ -z "$diskimage" ]; then
+		log e "Disk image not specified. Assuming rootdir points at actual eden folder. Do nothing."
+		return 1
+	fi
+	check_ramdisk_mounted false || {
+		ramdisk_unmount
+	}
+	check_diskimage_mounted true || {
+		log e "Disk image not mounted."
+		return 1
+	}
+	${busybox} umount ${rootdir}
+	${busybox} losetup -d /dev/block/loop0
+	log i "Checking filesystem integrity..."
+	e2fsck -y -f "$diskimage"
+	setprop sys.eden.diskimage.mounted false
+}
+
+assert_bool_prop() {
+	local prop=$1
+	local bool=$2
+
+	case "$bool" in
+	true)
+		if ! [ "$(getprop ${prop})" = "true" ]; then
+			return 1
+		fi
+		;;
+	false)
+		if [ "$(getprop ${prop})" = "true" ]; then
+			return 1
+		fi
+		;;
+	*)
+		log e "assert_bool_prop: invalid parameter $bool. expected true|false"
+		return 2
+		;;
+	esac
+	return 0
+}
+
+check_ramdisk_mounted() {
+	assert_bool_prop sys.eden.ramdisk.mounted $1
+}
+
+check_diskimage_mounted() {
+	assert_bool_prop sys.eden.diskimage.mounted $1
+}
+
+check_eden_enabled() {
+	assert_bool_prop persist.eden.enabled true || {
+		log e "Eden not enabled. Exiting"
+		exit 1
+	}
+}
+
+check_storage() {
+	rootdir=$(getprop persist.eden.rootdir)
+	if [ -z "$rootdir" ]; then
+		log e "persist.eden.rootdir not set. Exiting."
+		exit 1
+	fi
+	diskimage=$(getprop persist.eden.diskimage)
+}
+
+resize_diskimage() {
+	if [ -z "$diskimage" ]; then
+		log e "Eden disk image not enabled. Cannot resize. Exiting."
+		exit 1
+	fi
+	size=$(getprop persist.eden.diskimage.size)
+	if [ -z "$size" ]; then
+		log e "persist.eden.diskimage.size not set. Exiting."
+		exit 1
+	fi
+	check_ramdisk_mounted false || {
+		ramdisk_unmount; die "$?"
+	}
+	check_diskimage_mounted false || {
+		diskimage_unmount; die "$?"
+	}
+	log i "Checking filesystem integrity..."
+	e2fsck -y -f "$diskimage"
+	log i "Resizing disk image to $size..."
+	truncate -s "$size" "$diskimage"; die "$?"
+	resize2fs "$diskimage"; die "$?"
+	log i "Checking filesystem integrity post-resize..."
+	e2fsck -y -f "$diskimage"
+	log i "Resize successful."
+}
+
+main_delete() {
+	check_ramdisk_mounted false || {
+		ramdisk_unmount
+	}
+	check_diskimage_mounted false || {
+		diskimage_unmount
+	}
+	log i "Deleting eden image..."
+	[ -n "$diskimage" ] && rm -f "$diskimage" || rm -rf "$rootdir"
+	log i "Successful. Bye-bye Eden!"
+	setprop persist.eden.enabled false
+}
+
+main_enter() {
+	export ANDROID_ROOT=/
+	export PATH=/usr/bin:/usr/bin/applets:/system/xbin:/system/bin:/sbin
+	export TERM=screen-256color
+	export TERMINFO=/etc/terminfo
+	export SHELL=/bin/sh
+	$SHELL --login
+}
+
+main_status() {
+	for prop in persist.eden.enabled \
+	            persist.eden.rootdir \
+	            persist.eden.diskimage \
+	            persist.eden.diskimage.size \
+	            sys.eden.diskimage.mounted \
+	            sys.eden.ramdisk.mounted
+	do
+		log i "${prop}: $(getprop ${prop})"
+	done
+}
+
+[ $# -ne 0 ] || { usage; exit 1; }
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	bootstrap)
+		check_storage
+		main_bootstrap
+		;;
+	diskimage-mount)
+		check_eden_enabled
+		check_storage
+		diskimage_mount
+		;;
+	diskimage-unmount)
+		check_eden_enabled
+		check_storage
+		diskimage_unmount
+		;;
+	mount)
+		check_eden_enabled
+		check_storage
+		ramdisk_mount
+		;;
+	unmount)
+		check_eden_enabled
+		check_storage
+		ramdisk_unmount
+		;;
+	resize)
+		check_eden_enabled
+		check_storage
+		resize_diskimage
+		;;
+	delete)
+		check_eden_enabled
+		check_storage
+		main_delete
+		;;
+	enter)
+		check_eden_enabled
+		main_enter
+		;;
+	status)
+		main_status
+		;;
+	fix-permissions)
+		check_eden_enabled
+		check_storage
+		set_permissions "$rootdir" root root
+		chmod g-rwx,o-rwx "$rootdir/etc/ssh"
+		chmod g-rwx,o-rwx "$rootdir/home/.ssh"
+		;;
+	-l|--logcat)
+		logcat=true
+		;;
+	*)
+		usage
+		exit 1
+	esac
+	shift
+done
