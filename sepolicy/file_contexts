@@ -57,3 +57,5 @@
 /data/eden/rootfs(/.*)?                         u:object_r:eden_rootfs_file:s0
 /data/eden/disk.img                             u:object_r:eden_diskimage_file:s0
 
+# Busybox
+/system/xbin/busybox                            u:object_r:busybox_exec:s0
