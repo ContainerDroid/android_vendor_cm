@@ -1,0 +1,61 @@
+# vim: set ft=sh:
+
+loglevel 7
+
+# Sets persist.eden.enabled=true
+service eden-bootstrap /system/bin/eden --logcat bootstrap
+    user root
+    group root
+    disabled
+    oneshot
+
+# Sets persist.eden.enabled=false
+service eden-delete /system/bin/eden --logcat delete
+    user root
+    group root
+    disabled
+    oneshot
+
+# Sets sys.eden.diskimage.mounted=true
+service eden-di-mount /system/bin/eden --logcat diskimage-mount
+    user root
+    group root
+    disabled
+    oneshot
+
+# Sets sys.eden.diskimage.mounted=false
+service eden-di-unmount /system/bin/eden --logcat diskimage-unmount
+    user root
+    group root
+    disabled
+    oneshot
+
+# Sets sys.eden.ramdisk.mounted=true
+service eden-rd-mount /system/bin/eden --logcat mount
+    user root
+    group root
+    disabled
+    oneshot
+
+# Sets sys.eden.ramdisk.mounted=false
+service eden-rd-unmount /system/bin/eden --logcat unmount
+    user root
+    group root
+    disabled
+    oneshot
+
+on post-fs-data
+    write /dev/kmsg "Creating Eden environment "
+    mkdir /data/eden 0750 root root
+    mkdir /data/eden/rootfs 0750 root root
+    setprop persist.eden.rootdir /data/eden/rootfs
+    setprop persist.eden.diskimage /data/eden/disk.img
+    setprop persist.eden.diskimage.size 1G
+
+on property:persist.eden.enabled=true && property:sys.boot_completed=1
+    write /dev/kmsg "Mounting Eden diskimage "
+    start eden-di-mount
+
+on property:sys.eden.diskimage.mounted=true
+    write /dev/kmsg "Mounting Eden into ramdisk "
+    start eden-rd-mount
