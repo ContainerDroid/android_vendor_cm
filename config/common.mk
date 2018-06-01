@@ -34,6 +34,7 @@ endif
 # Termux
 PRODUCT_COPY_FILES += \
     vendor/cm/prebuilt/common/bin/eden:system/bin/eden \
+    vendor/cm/prebuilt/$(TARGET_ARCH)/xbin/busybox:system/xbin/busybox \
 
 # Backup Tool
 PRODUCT_COPY_FILES += \
