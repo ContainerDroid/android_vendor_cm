@@ -33,7 +33,7 @@ endif
 
 # Termux
 PRODUCT_COPY_FILES += \
-    vendor/cm/prebuilt/common/bin/termux:system/bin/termux
+    vendor/cm/prebuilt/common/bin/eden:system/bin/eden \
 
 # Backup Tool
 PRODUCT_COPY_FILES += \
