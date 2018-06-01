@@ -50,3 +50,10 @@
 
 # OTA packages
 /data/lineageos_updates(/.*)?                   u:object_r:ota_package_file:s0
+
+# Eden
+/system/bin/eden                                u:object_r:eden_exec:s0
+/data/eden(/.*)?                                u:object_r:eden_data_file:s0
+/data/eden/rootfs(/.*)?                         u:object_r:eden_rootfs_file:s0
+/data/eden/disk.img                             u:object_r:eden_diskimage_file:s0
+

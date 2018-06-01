@@ -1,0 +1,21 @@
+type eden, domain;
+type eden_exec, exec_type, file_type;
+
+init_daemon_domain(eden)
+
+allow eden eden_data_file:dir       create_dir_perms;
+allow eden eden_data_file:file      create_file_perms;
+allow eden eden_rootfs_file:file    create_file_perms;
+allow eden eden_rootfs_file:dir     { create_dir_perms mounton };
+allow eden eden_diskimage_file:file create_file_perms;
+allow eden proc_swaps:file          r_file_perms;
+allow eden proc_filesystems:file    r_file_perms;
+allow eden loop_device:blk_file     create_file_perms;
+allow eden rootfs:dir               create_dir_perms;
+
+allow eden busybox_exec:file rx_file_perms;
+allow eden shell_exec:file   rx_file_perms;
+allow eden toolbox_exec:file rx_file_perms;
+allow eden fsck_exec:file    rx_file_perms;
+
+set_prop(eden, eden_prop)
