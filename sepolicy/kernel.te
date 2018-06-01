@@ -1,2 +1,8 @@
 # used by sdcardfs to read package list
 allow kernel system_data_file:file open;
+
+# denied { read } for comm="loop0" path="/data/eden/disk.img" dev="dm-0" scontext=u:r:kernel:s0 tcontext=u:object_r:eden_diskimage_file:s0 tclass=file
+allow kernel eden_diskimage_file:file r_file_perms;
+
+# denied { use } for comm="loop0" path="/data/eden/disk.img" dev="dm-0" scontext=u:r:kernel:s0 tcontext=u:r:eden:s0 tclass=fd
+allow kernel eden:fd { use };
