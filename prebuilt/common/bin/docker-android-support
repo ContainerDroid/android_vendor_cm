@@ -1,0 +1,22 @@
+#! /bin/sh
+
+SOURCE_DIR=$1
+CONTAINER=$2
+
+usage() {
+	echo "Usage:"
+	echo "$0 <source dir> <container_id>"
+	exit 1
+}
+
+[[ $# -eq 2 ]] || usage
+
+docker cp ${SOURCE_DIR}/usr/lib/libbinder.so ${CONTAINER}:/usr/lib/
+docker cp ${SOURCE_DIR}/usr/lib/libbase.so ${CONTAINER}:/usr/lib/
+docker cp ${SOURCE_DIR}/usr/lib/libutils.so ${CONTAINER}:/usr/lib/
+docker cp ${SOURCE_DIR}/usr/lib/libcutils.so ${CONTAINER}:/usr/lib/
+docker cp ${SOURCE_DIR}/usr/lib/liblog.so ${CONTAINER}:/usr/lib/
+docker cp ${SOURCE_DIR}/usr/bin/dumpsys ${CONTAINER}:/usr/bin/
+
+
+

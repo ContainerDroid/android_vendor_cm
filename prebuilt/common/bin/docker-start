@@ -1,0 +1,8 @@
+#! /bin/sh
+
+docker run --privileged -it \
+	-v /dev/binder:/dev/binder \
+	-v /dev/socket/logdw:/dev/socket/logdw \
+	-v /dev/socket/logdr:/dev/socket/logdr \
+	--network=host \
+	$@
