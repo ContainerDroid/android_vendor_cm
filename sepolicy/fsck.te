@@ -1,0 +1,2 @@
+# Re-add the lost permissions when /proc/swaps was relabeled
+allow fsck proc_swaps:file r_file_perms;

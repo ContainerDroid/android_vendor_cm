@@ -1,2 +1,5 @@
 # External storage
 allow fsck_untrusted self:capability sys_admin;
+
+# Re-add the lost permissions when /proc/swaps was relabeled
+allow fsck_untrusted proc_swaps:file r_file_perms;
