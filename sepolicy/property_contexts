@@ -2,3 +2,9 @@ adb.network.port              u:object_r:adbtcp_prop:s0
 recovery.perf.mode            u:object_r:recovery_prop:s0
 ro.adb.secure                 u:object_r:adbsecure_prop:s0
 cm.userinit.active            u:object_r:userinit_prop:s0
+persist.eden.enabled          u:object_r:eden_prop:s0
+persist.eden.rootdir          u:object_r:eden_prop:s0
+persist.eden.diskimage        u:object_r:eden_prop:s0
+persist.eden.diskimage.size   u:object_r:eden_prop:s0
+sys.eden.diskimage.mounted    u:object_r:eden_prop:s0
+sys.eden.ramdisk.mounted      u:object_r:eden_prop:s0
